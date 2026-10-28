@@ -1,0 +1,43 @@
+server:
+  port: ${PORT:8090}   # 8080 is taken by Jenkins on this machine
+
+spring:
+  application:
+    name: api-gateway
+  cloud:
+    gateway:
+      httpclient:
+        connect-timeout: 2000
+        response-timeout: 30s
+      globalcors:
+        cors-configurations:
+          "[/**]":
+            allowed-origins: "http://localhost:5173,http://localhost:3000"
+            allowed-methods: "*"
+            allowed-headers: "*"
+            exposed-headers: "Idempotent-Replayed,X-Request-Id"
+      routes:
+        - id: users
+          uri: ${USER_SERVICE_URL:http://localhost:8181}
+          predicates:
+            - Path=/api/users/**,/api/users
+        - id: packages
+          uri: ${PACKAGE_SERVICE_URL:http://localhost:8183}
+          predicates:
+            - Path=/api/packages/**,/api/packages
+        - id: notification-stream
+          uri: ${NOTIFICATION_SERVICE_URL:http://localhost:8185}
+          predicates:
+            - Path=/api/notifications/stream
+          metadata:
+            response-timeout: -1
+        - id: notifications
+          uri: ${NOTIFICATION_SERVICE_URL:http://localhost:8185}
+          predicates:
+            - Path=/api/notifications/**,/api/notifications
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,gateway

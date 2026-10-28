@@ -1,0 +1,92 @@
+name: plotpack
+
+x-service: &service
+  restart: unless-stopped
+  mem_limit: 512m
+  environment:
+    MYSQL_HOST: mysql
+    MYSQL_PORT: 3306
+    MYSQL_PASSWORD: plotpack
+    REDIS_HOST: redis
+    KAFKA_BOOTSTRAP: kafka:9092
+    USER_SERVICE_URL: http://user-service:8181
+    PACKAGE_SERVICE_URL: http://package-service:8183
+    NOTIFICATION_SERVICE_URL: http://notification-service:8185
+  depends_on:
+    mysql: { condition: service_healthy }
+    redis: { condition: service_healthy }
+    kafka: { condition: service_healthy }
+
+services:
+  # ---------------------------------------------------------------- infrastructure
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: plotpack
+    ports: ["3307:3306"]
+    volumes: [mysql-data:/var/lib/mysql]
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-pplotpack"]
+      interval: 5s
+      retries: 30
+
+  redis:
+    image: redis:7.4-alpine
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 20
+
+  kafka:
+    image: apache/kafka:3.8.0
+    ports: ["9094:9094"]
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:9094
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://localhost:9094
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_NUM_PARTITIONS: 3
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1"]
+      interval: 5s
+      retries: 30
+
+  # ---------------------------------------------------------------- microservices
+  user-service:
+    <<: *service
+    build: { context: ., args: { SERVICE: user-service } }
+    ports: ["8181:8181"]
+
+  package-service:
+    <<: *service
+    build: { context: ., args: { SERVICE: package-service } }
+    ports: ["8183:8183"]
+
+  notification-service:
+    <<: *service
+    build: { context: ., args: { SERVICE: notification-service } }
+    ports: ["8185:8185"]
+
+  api-gateway:
+    <<: *service
+    build: { context: ., args: { SERVICE: api-gateway } }
+    ports: ["8090:8090"]
+    depends_on: [user-service, package-service, notification-service]
+
+  # ---------------------------------------------------------------- React UI (nginx proxies /api to the gateway)
+  frontend:
+    build: ./frontend
+    ports: ["3000:80"]
+    depends_on: [api-gateway]
+
+volumes:
+  mysql-data:
